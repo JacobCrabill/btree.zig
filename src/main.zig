@@ -33,6 +33,21 @@ pub fn NodeMethods(comptime Self: type) type {
     };
 }
 
+pub fn ControlNodeMethods(comptime Self: type) type {
+    return struct {
+        pub fn addChild(self: *Self, child: anytype) !void {
+            try self.children.append(child);
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.children.deinit();
+        }
+
+        // Include all generic NodeMethods
+        pub usingnamespace NodeMethods(Self);
+    };
+}
+
 // A generic behavior tree node type
 pub fn Node(comptime Ctx: type, comptime Id: []const u8) type {
     return struct {
@@ -60,6 +75,40 @@ pub fn Node(comptime Ctx: type, comptime Id: []const u8) type {
     };
 }
 
+pub fn SequenceNode(comptime Ctx: type, comptime Id: []const u8) type {
+    return struct {
+        const Self = @This();
+        pub const ID: []const u8 = Id;
+        context: *Ctx,
+        name: []const u8,
+        status: NodeStatus = .IDLE,
+        children: ArrayList(*NodeType),
+
+        pub fn init(context: *Ctx, name: []const u8, alloc: Allocator) Self {
+            return Self{
+                .context = context,
+                .name = name,
+                .children = ArrayList(*NodeType).init(alloc),
+            };
+        }
+
+        // Return the name of the Node type
+        pub fn getId(_: Self) []const u8 {
+            return ID;
+        }
+
+        pub fn tickChildren(self: *Self) NodeStatus {
+            var res = NodeStatus.IDLE;
+            for (self.children) |child| {
+                res = child.tick();
+            }
+            return res;
+        }
+
+        pub usingnamespace ControlNodeMethods(Self);
+    };
+}
+
 const Context = struct {
     foo: i32 = 0,
     bar: u32 = 0,
@@ -67,11 +116,14 @@ const Context = struct {
 
 const FooNode = Node(Context, "foo");
 const RootNode = Node(Context, "root");
+const Sequence = SequenceNode(Context, "sequence");
 
+/// The NodeType union is our registry of all available node types
 const NodeType = union(enum) {
     const Self = @This();
     foo: FooNode,
     root: RootNode,
+    seq: Sequence,
 
     // Tick the specific node type which is active
     fn tick(self: *Self) NodeStatus {
@@ -114,7 +166,7 @@ pub fn TreeFactory(comptime node_types: type, comptime ctx: type) type {
             };
         }
 
-        fn build(self: *Self, id: []const u8, name: []const u8) TreeFactoryError!RegTypes {
+        fn build(self: *Self, alloc: Allocator, id: []const u8, name: []const u8) TreeFactoryError!RegTypes {
             // The fields of our union are the "registered" node types
             // We want to construct a NodeType which has the ID "id"
             const fields = std.meta.fields(RegTypes);
@@ -124,7 +176,16 @@ pub fn TreeFactory(comptime node_types: type, comptime ctx: type) type {
                     if (!@hasField(field.type, "context")) {
                         return TreeFactoryError.BadNodeType;
                     }
-                    return @unionInit(RegTypes, field.name, .{ .context = self.context, .name = name });
+
+                    if (@hasField(field.type, "children")) {
+                        if (!@hasDecl(field.type, "init"))
+                            @compileError("type " ++ field.name ++ " does not have method 'init'");
+
+                        var ctrl = field.type.init(self.context, name, alloc);
+                        return @unionInit(RegTypes, field.name, ctrl);
+                    } else {
+                        return @unionInit(RegTypes, field.name, .{ .context = self.context, .name = name });
+                    }
                 }
             }
 
@@ -156,12 +217,29 @@ test "Construct and tick a node" {
     }
 }
 
-test "Factory build" {
+test "Build from Factory" {
     var ctx = Context{};
     var factory = TreeFactory(NodeType, Context).init(std.testing.allocator, &ctx);
 
-    var new_node: NodeType = try factory.build("foo", "foo_instance");
+    var new_node: NodeType = try factory.build(std.testing.allocator, "foo", "foo_instance");
 
     std.debug.print("Tick status: {any}\n", .{new_node.tick()});
     std.debug.print("We have a node of ID: {s}\n", .{new_node.getId()});
+}
+
+test "Sequence node" {
+    var ctx = Context{};
+    var factory = TreeFactory(NodeType, Context).init(std.testing.allocator, &ctx);
+
+    var seq0 = SequenceNode(Context, "sequence"){ .context = &ctx, .name = "sequence_0", .children = ArrayList(*NodeType).init(std.testing.allocator) };
+
+    var leaf: NodeType = try factory.build(std.testing.allocator, "foo", "foo_instance");
+    var seq_node = try factory.build(std.testing.allocator, "sequence", "sequence_1");
+    var seq = seq_node.seq;
+    defer seq.deinit();
+
+    try seq.addChild(&leaf);
+
+    _ = seq0.tick();
+    _ = seq.tick();
 }
