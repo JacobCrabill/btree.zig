@@ -5,81 +5,55 @@ const bt = @import("btree.zig");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
-/// TODO: This is the wrong way to make an impl. Redo.
-// A generic behavior tree node type
-pub fn Node(comptime Ctx: type, comptime Id: []const u8) type {
-    return struct {
-        const Self = @This();
-        pub const ID: []const u8 = Id;
-        context: *Ctx,
-        name: []const u8,
-        status: bt.NodeStatus = .IDLE,
+/// Sample Context struct shared by all of our nodes
+const Context = struct {
+    foo: i32 = 0,
+    bar: u32 = 0,
+};
 
-        tickCount: usize = 0,
+/// Dummy / example leaf node
+const DummyNode = struct {
+    const Self = @This();
+    pub const ID = "dummy";
+    context: *Context,
+    name: []const u8,
+    status: bt.NodeStatus = .IDLE,
 
-        // Create an instance of this Node type
-        pub fn init(ctx: *Ctx, name: []const u8) Self {
-            return Self{
-                .context = ctx,
-                .name = name,
-            };
+    tickCount: usize = 0,
+
+    // Create an instance of this Node type
+    pub fn init(ctx: *Context, name: []const u8) Self {
+        return Self{
+            .context = ctx,
+            .name = name,
+        };
+    }
+
+    // Return the name of the Node type
+    pub fn getId(_: Self) []const u8 {
+        return ID;
+    }
+
+    pub fn tick(self: *Self) bt.NodeStatus {
+        self.status = .RUNNING;
+        if (self.tickCount > 2) {
+            self.status = .SUCCESS;
         }
 
-        // Return the name of the Node type
-        pub fn getId(_: Self) []const u8 {
-            return ID;
-        }
+        std.debug.print("[{s}][{s}] ", .{ self.getId(), self.name });
+        std.debug.print("tick -> {any}!\n", .{self.getStatus()});
 
-        pub fn tick(self: *Self) bt.NodeStatus {
-            self.status = .RUNNING;
-            if (self.tickCount > 2) {
-                self.status = .SUCCESS;
-            }
+        self.tickCount += 1;
+        return self.status;
+    }
 
-            std.debug.print("[{s}][{s}] ", .{ self.getId(), self.name });
-            std.debug.print("tick -> {any}!\n", .{self.getStatus()});
+    // Use the mixin approach to add methods to our Node type
+    pub usingnamespace bt.NodeI(Self);
+};
 
-            self.tickCount += 1;
-            return self.status;
-        }
+const Sequence = bt.SequenceNode(Context, NodeReg, "sequence");
 
-        // Use the mixin approach to add methods to our Node type
-        pub usingnamespace bt.NodeI(Self);
-    };
-}
-
-pub fn SequenceNode(comptime Ctx: type, comptime Id: []const u8) type {
-    return struct {
-        const Self = @This();
-        pub const ID: []const u8 = Id;
-        context: *Ctx,
-        name: []const u8,
-        status: bt.NodeStatus = .IDLE,
-        children: ArrayList(*NodeType),
-        cur_idx: usize,
-
-        pub fn init(alloc: Allocator, context: *Ctx, name: []const u8) Self {
-            return Self{
-                .context = context,
-                .name = name,
-                .cur_idx = 0,
-                .children = ArrayList(*NodeType).init(alloc),
-            };
-        }
-
-        // Return the name of the Node type
-        pub fn getId(_: Self) []const u8 {
-            return ID;
-        }
-
-        pub fn tick(self: *Self) bt.NodeStatus {
-            return self.tickChildren();
-        }
-
-        pub usingnamespace bt.SequenceNodeI(Self);
-    };
-}
-
+/// Another sample Sequence node implementation
 const SeqNode = struct {
     const Self = @This();
     pub const ID = "sequence_node";
@@ -87,7 +61,7 @@ const SeqNode = struct {
     status: bt.NodeStatus = .IDLE,
     context: *Context = undefined,
     alloc: Allocator,
-    children: ArrayList(*NodeType),
+    children: ArrayList(*NodeReg),
     cur_idx: usize,
 
     pub fn init(alloc: Allocator, ctx: *Context, name: []const u8) Self {
@@ -97,7 +71,7 @@ const SeqNode = struct {
             .name = name,
             .context = ctx,
             .cur_idx = 0,
-            .children = ArrayList(*NodeType).init(alloc),
+            .children = ArrayList(*NodeReg).init(alloc),
         };
     }
 
@@ -112,21 +86,11 @@ const SeqNode = struct {
     pub usingnamespace bt.SequenceNodeI(Self);
 };
 
-const Context = struct {
-    foo: i32 = 0,
-    bar: u32 = 0,
-};
-
-const FooNode = Node(Context, "foo");
-const RootNode = Node(Context, "root");
-const Sequence = SequenceNode(Context, "sequence");
-
-/// The NodeType union is our registry of all available node types
-const NodeType = union(enum) {
+/// The NodeReg union is our registry of all available node types
+const NodeReg = union(enum) {
     const Self = @This();
-    foo: FooNode,
-    root: RootNode,
-    seq: Sequence,
+    foo: DummyNode,
+    seq0: Sequence,
     seq1: SeqNode,
     leaf: NewLeaf,
 
@@ -147,31 +111,21 @@ const NodeType = union(enum) {
 test "Construct and tick a node" {
     var ctx = Context{};
 
-    var root = RootNode.init(&ctx, "root");
-    var foo = FooNode.init(&ctx, "foonode");
+    var foo = DummyNode.init(&ctx, "dummy");
+    var foo2 = DummyNode.init(&ctx, "foonode");
 
-    const res1 = root.tick();
-    const res2 = foo.tick();
+    const res1 = foo.tick();
+    const res2 = foo2.tick();
 
     std.debug.print("result: {}\n", .{res1});
     std.debug.print("result: {}\n", .{res2});
-
-    // Try making a list of Nodes...?
-    var list = std.ArrayList(NodeType).init(std.testing.allocator);
-    defer list.deinit();
-    try list.append(NodeType{ .root = root });
-    try list.append(NodeType{ .foo = foo });
-
-    for (std.meta.declarations(@TypeOf(foo))) |decl| {
-        std.debug.print("{s}, {any}\n", .{ decl.name, decl.is_pub });
-    }
 }
 
 test "Build from Factory" {
     var ctx = Context{};
-    var factory = bt.TreeFactory(NodeType, Context).init(std.testing.allocator, &ctx);
+    var factory = bt.TreeFactory(NodeReg, Context).init(std.testing.allocator, &ctx);
 
-    var new_node: NodeType = try factory.build("foo", "foo_instance");
+    var new_node: NodeReg = try factory.build("dummy", "foo_instance");
 
     std.debug.print("Tick status: {any}\n", .{new_node.tick()});
     std.debug.print("We have a node of ID: {s}\n", .{new_node.getId()});
@@ -180,7 +134,7 @@ test "Build from Factory" {
 test "Build directly" {
     // Initialize a node directly using its "constructtor"
     var ctx = Context{};
-    var seq0 = SequenceNode(Context, "sequence").init(std.testing.allocator, &ctx, "sequence_0");
+    var seq0 = bt.SequenceNode(Context, NodeReg, "sequence").init(std.testing.allocator, &ctx, "sequence_0");
     _ = seq0.tick();
 }
 
@@ -188,14 +142,14 @@ test "Sequence node" {
     std.debug.print("\n---- Testing basic SequenceNode ----\n", .{});
     var ctx = Context{};
 
-    var factory = bt.TreeFactory(NodeType, Context).init(std.testing.allocator, &ctx);
+    var factory = bt.TreeFactory(NodeReg, Context).init(std.testing.allocator, &ctx);
 
     // Initialize using the Factory
     var seq_node = try factory.build("sequence_node", "sequence_1");
 
-    var leaf0: NodeType = try factory.build("foo", "leaf_0");
-    var leaf1: NodeType = try factory.build("foo", "leaf_1");
-    var leaf2: NodeType = try factory.build("foo", "leaf_1");
+    var leaf0: NodeReg = try factory.build("dummy", "leaf_0");
+    var leaf1: NodeReg = try factory.build("dummy", "leaf_1");
+    var leaf2: NodeReg = try factory.build("dummy", "leaf_1");
 
     var seq = seq_node.seq1;
     defer seq.deinit();
@@ -242,7 +196,7 @@ const NewLeaf = struct {
 
 test "Stateful Leaf Node" {
     var ctx = Context{};
-    var factory = bt.TreeFactory(NodeType, Context).init(std.testing.allocator, &ctx);
+    var factory = bt.TreeFactory(NodeReg, Context).init(std.testing.allocator, &ctx);
 
     var leaf_node = try factory.build("new_leaf", "foo_leaf");
 
