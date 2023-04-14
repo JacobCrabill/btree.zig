@@ -44,7 +44,7 @@ pub fn Node(comptime Ctx: type, comptime Id: []const u8) type {
         }
 
         // Use the mixin approach to add methods to our Node type
-        pub usingnamespace bt.NodeMethods(Self);
+        pub usingnamespace bt.NodeI(Self);
     };
 }
 
@@ -80,6 +80,38 @@ pub fn SequenceNode(comptime Ctx: type, comptime Id: []const u8) type {
     };
 }
 
+const SeqNode = struct {
+    const Self = @This();
+    pub const ID = "sequence_node";
+    name: []const u8 = undefined,
+    status: bt.NodeStatus = .IDLE,
+    context: *Context = undefined,
+    alloc: Allocator,
+    children: ArrayList(*NodeType),
+    cur_idx: usize,
+
+    pub fn init(alloc: Allocator, ctx: *Context, name: []const u8) Self {
+        return .{
+            .status = .IDLE,
+            .alloc = alloc,
+            .name = name,
+            .context = ctx,
+            .cur_idx = 0,
+            .children = ArrayList(*NodeType).init(alloc),
+        };
+    }
+
+    pub fn getId(_: Self) []const u8 {
+        return ID;
+    }
+
+    pub fn tick(self: *Self) bt.NodeStatus {
+        return self.tickChildren();
+    }
+
+    pub usingnamespace bt.SequenceNodeI(Self);
+};
+
 const Context = struct {
     foo: i32 = 0,
     bar: u32 = 0,
@@ -95,6 +127,8 @@ const NodeType = union(enum) {
     foo: FooNode,
     root: RootNode,
     seq: Sequence,
+    seq1: SeqNode,
+    leaf: NewLeaf,
 
     // Tick the specific node type which is active
     pub fn tick(self: *Self) bt.NodeStatus {
@@ -137,7 +171,7 @@ test "Build from Factory" {
     var ctx = Context{};
     var factory = bt.TreeFactory(NodeType, Context).init(std.testing.allocator, &ctx);
 
-    var new_node: NodeType = try factory.build(std.testing.allocator, "foo", "foo_instance");
+    var new_node: NodeType = try factory.build("foo", "foo_instance");
 
     std.debug.print("Tick status: {any}\n", .{new_node.tick()});
     std.debug.print("We have a node of ID: {s}\n", .{new_node.getId()});
@@ -157,13 +191,13 @@ test "Sequence node" {
     var factory = bt.TreeFactory(NodeType, Context).init(std.testing.allocator, &ctx);
 
     // Initialize using the Factory
-    var seq_node = try factory.build(std.testing.allocator, "sequence", "sequence_1");
+    var seq_node = try factory.build("sequence_node", "sequence_1");
 
-    var leaf0: NodeType = try factory.build(std.testing.allocator, "foo", "leaf_0");
-    var leaf1: NodeType = try factory.build(std.testing.allocator, "foo", "leaf_1");
-    var leaf2: NodeType = try factory.build(std.testing.allocator, "foo", "leaf_1");
+    var leaf0: NodeType = try factory.build("foo", "leaf_0");
+    var leaf1: NodeType = try factory.build("foo", "leaf_1");
+    var leaf2: NodeType = try factory.build("foo", "leaf_1");
 
-    var seq = seq_node.seq;
+    var seq = seq_node.seq1;
     defer seq.deinit();
 
     try seq.addChild(&leaf0);
@@ -175,6 +209,46 @@ test "Sequence node" {
         std.debug.print("----\n", .{});
     }
     std.debug.print("---- Success ----\n", .{});
+}
+
+const NewLeaf = struct {
+    pub const Self = @This();
+    pub const ID = "new_leaf";
+    context: *Context,
+    name: []const u8 = undefined,
+    status: bt.NodeStatus = .IDLE,
+
+    count: usize = 0,
+
+    pub fn getId(_: Self) []const u8 {
+        return ID;
+    }
+
+    pub fn onStart(self: *Self) bt.NodeStatus {
+        self.count = 1;
+        return .RUNNING;
+    }
+
+    pub fn onRun(self: *Self) bt.NodeStatus {
+        if (self.count > 2)
+            return .SUCCESS;
+
+        self.count += 1;
+        return .RUNNING;
+    }
+
+    pub usingnamespace bt.StatefulNodeI(Self);
+};
+
+test "Stateful Leaf Node" {
+    var ctx = Context{};
+    var factory = bt.TreeFactory(NodeType, Context).init(std.testing.allocator, &ctx);
+
+    var leaf_node = try factory.build("new_leaf", "foo_leaf");
+
+    var leaf: NewLeaf = leaf_node.leaf;
+
+    while (leaf.tick() == .RUNNING) {}
 }
 
 // ----------------------- Tests on 'usingnamespace' -----------------------
