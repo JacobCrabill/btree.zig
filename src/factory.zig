@@ -16,6 +16,25 @@ pub fn isValidNodeType(comptime node: type) bool {
     return true;
 }
 
+/// Methods applicable to the node-registry union
+pub fn RegistryMethods(comptime T: type) type {
+    return struct {
+        // Tick the specific node type which is active
+        pub fn tick(self: *T) bt.NodeStatus {
+            return switch (self.*) {
+                inline else => |*node| node.tick(),
+            };
+        }
+
+        // Get the ID of the active type
+        pub fn getId(self: T) []const u8 {
+            return switch (self) {
+                inline else => |*node| node.getId(),
+            };
+        }
+    };
+}
+
 /// Factory for building tree nodes from a node registry
 pub fn TreeFactory(comptime registration: type, comptime ctx: type) type {
     return struct {

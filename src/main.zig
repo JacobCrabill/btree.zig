@@ -51,8 +51,6 @@ const DummyNode = struct {
     pub usingnamespace bt.NodeI(Self);
 };
 
-const Sequence = bt.SequenceNode(Context, NodeReg, "sequence");
-
 /// Another sample Sequence node implementation
 const SeqNode = struct {
     const Self = @This();
@@ -90,22 +88,11 @@ const SeqNode = struct {
 const NodeReg = union(enum) {
     const Self = @This();
     foo: DummyNode,
-    seq0: Sequence,
+    seq0: bt.SequenceNode(Context, NodeReg, "sequence"),
     seq1: SeqNode,
     leaf: NewLeaf,
 
-    // Tick the specific node type which is active
-    pub fn tick(self: *Self) bt.NodeStatus {
-        return switch (self.*) {
-            inline else => |*node| node.tick(),
-        };
-    }
-
-    pub fn getId(self: Self) []const u8 {
-        return switch (self) {
-            inline else => |*node| node.getId(),
-        };
-    }
+    pub usingnamespace bt.RegistryMethods(Self);
 };
 
 test "Construct and tick a node" {
@@ -139,7 +126,6 @@ test "Build directly" {
 }
 
 test "Sequence node" {
-    std.debug.print("\n---- Testing basic SequenceNode ----\n", .{});
     var ctx = Context{};
 
     var factory = bt.TreeFactory(NodeReg, Context).init(std.testing.allocator, &ctx);
@@ -159,10 +145,7 @@ test "Sequence node" {
     try seq.addChild(&leaf2);
 
     std.debug.print("Ticking SequenceNode...\n", .{});
-    while (seq.tick() == bt.NodeStatus.RUNNING) {
-        std.debug.print("----\n", .{});
-    }
-    std.debug.print("---- Success ----\n", .{});
+    while (seq.tick() == bt.NodeStatus.RUNNING) {}
 }
 
 const NewLeaf = struct {
