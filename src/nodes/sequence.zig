@@ -1,6 +1,8 @@
 const std = @import("std");
-const bt = @import("../types.zig");
-const nodes = @import("../nodes.zig");
+const bt = struct {
+    pub usingnamespace @import("../types.zig");
+    pub usingnamespace @import("common.zig");
+};
 
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -29,7 +31,7 @@ pub fn SequenceNodeI(comptime Self: type) type {
             return NodeStatus.SUCCESS;
         }
 
-        pub usingnamespace nodes.ControlNodeI(Self);
+        pub usingnamespace bt.ControlNodeI(Self);
     };
 }
 
