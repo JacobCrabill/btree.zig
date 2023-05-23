@@ -2,8 +2,33 @@ const std = @import("std");
 
 const bt = @import("btree.zig");
 
+const GPA = std.heap.GeneralPurposeAllocator(.{});
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+
+pub fn main() !void {
+    var gpa = GPA{};
+    var alloc = gpa.allocator();
+
+    std.debug.print("Basic Behavior Tree library in Zig\n", .{});
+
+    std.debug.print("Creating a Behavior Tree Factory\n", .{});
+
+    var ctx = Context{};
+    var factory = bt.TreeFactory(NodeReg, Context).init(alloc, &ctx);
+
+    std.debug.print("Instantiating a leaf node from the factory\n", .{});
+
+    var leaf_node = try factory.build("new_leaf", "foo_leaf");
+
+    var leaf: NewLeaf = leaf_node.leaf;
+
+    std.debug.print("Ticking the node until complete...\n", .{});
+
+    while (leaf.tick() == .RUNNING) {}
+
+    std.debug.print("Success!\n", .{});
+}
 
 /// Sample Context struct shared by all of our nodes
 const Context = struct {
